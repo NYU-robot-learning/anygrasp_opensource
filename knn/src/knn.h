@@ -3,8 +3,13 @@
 
 #ifdef WITH_CUDA
 #include "cuda/vision.h"
-#include <THC/THC.h>
-extern THCState *state;
+// #include <THC/THC.h>
+// extern THCState *state;
+#include <ATen/ATen.h>
+#include <ATen/cuda/CUDAContext.h>
+
+#include <cuda.h>
+#include <cuda_runtime.h>
 #endif
 
 
@@ -30,21 +35,26 @@ int knn(at::Tensor& ref, at::Tensor& query, at::Tensor& idx)
   if (ref.type().is_cuda()) {
 #ifdef WITH_CUDA
     // TODO raise error if not compiled with CUDA
-    float *dist_dev = (float*)THCudaMalloc(state, ref_nb * query_nb * sizeof(float));
+    // float *dist_dev = (float*)THCudaMalloc(state, ref_nb * query_nb * sizeof(float));
+    auto dist = at::empty({ref_nb, query_nb}, ref.options());
+    auto dist_dev = dist.data<float>();
 
     for (int b = 0; b < batch; b++)
     {
     // knn_device(ref_dev + b * dim * ref_nb, ref_nb, query_dev + b * dim * query_nb, query_nb, dim, k,
     //   dist_dev, idx_dev + b * k * query_nb, THCState_getCurrentStream(state));
+    // cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+      // auto device = cuda::device::current::get();
+      // auto stream = device.create_stream(cuda::stream::sync);
       knn_device(ref_dev + b * dim * ref_nb, ref_nb, query_dev + b * dim * query_nb, query_nb, dim, k,
-      dist_dev, idx_dev + b * k * query_nb, c10::cuda::getCurrentCUDAStream());
+      dist_dev, idx_dev + b * k * query_nb, at::cuda::getCurrentCUDAStream());
     }
-    THCudaFree(state, dist_dev);
-    cudaError_t err = cudaGetLastError();
+    // THCudaFree(state, dist_dev);
+    auto err = cudaGetLastError();
     if (err != cudaSuccess)
     {
         printf("error in knn: %s\n", cudaGetErrorString(err));
-        THError("aborting");
+        // THError("aborting");
     }
     return 1;
 #else

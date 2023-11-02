@@ -1,0 +1,1 @@
+python demo3.py --open_communication
