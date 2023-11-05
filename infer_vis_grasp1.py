@@ -33,7 +33,7 @@ parser.add_argument('--camera', default='realsense', help='Camera split [realsen
 parser.add_argument('--num_point', type=int, default=200000, help='Point Number [default: 15000]')
 parser.add_argument('--batch_size', type=int, default=1, help='Batch Size during inference [default: 1]')
 parser.add_argument('--voxel_size', type=float, default=0.005, help='Voxel Size for sparse convolution')
-parser.add_argument('--collision_thresh', type=float, default=-1,
+parser.add_argument('--collision_thresh', type=float, default=0.01,
                     help='Collision Threshold in collision detection [default: 0.01]')
 parser.add_argument('--voxel_size_cd', type=float, default=0.01, help='Voxel Size for collision detection')
 parser.add_argument('--infer', action='store_true', default=False)

@@ -35,6 +35,8 @@ parser.add_argument('--scene', type=str, default='0118')
 parser.add_argument('--index', type=str, default='0256')
 parser.add_argument('--open_communication', action='store_true', help='Use image transferred from the robot')
 parser.add_argument('--crop', action='store_true', help='Passing cropped image to anygrasp')
+parser.add_argument('--environment', default = '/data/pick_and_place_exps/Sofa', help='Environment name')
+parser.add_argument('--method', default = 'usa', help='navigation method name')
 cfgs = parser.parse_args()
 
 # Creating a REP socket
@@ -60,7 +62,47 @@ def recv_array(socket, flags=0, copy=True, track=False):
     A = np.frombuffer(msg, dtype=md['dtype'])
     return A.reshape(md['shape'])
 
-def get_bounding_box(image, text, tries):
+def visualize_cloud_grippers(cloud, grippers, translation = None, rotation = None, visualize = True, save_file = None):
+    """
+        cloud       : Point cloud of points
+        grippers    : list of grippers of form graspnetAPI grasps
+        visualise   : To show windows
+        save_file   : Visualisation file name
+    """
+
+    coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2, origin=[0, 0, 0])
+    if translation is not None:
+        coordinate_frame1 = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2, origin=[0, 0, 0])
+        print(grippers[0])
+        translation[2] = translation[2]
+        coordinate_frame1.translate(translation)
+        coordinate_frame1.rotate(rotation)
+
+    visualizer = o3d.visualization.Visualizer()
+    visualizer.create_window(visible=visualize)
+    for gripper in grippers:
+        visualizer.add_geometry(gripper)
+    visualizer.add_geometry(cloud)
+    if translation is not None:
+        visualizer.add_geometry(coordinate_frame1)
+    # visualizer.poll_events()
+    # visualizer.update_renderer()
+
+    if save_file is not None:
+        ## Controlling the zoom
+        view_control = visualizer.get_view_control()
+        zoom_scale_factor = 1.4  
+        view_control.scale(zoom_scale_factor)
+
+        visualizer.capture_screen_image(save_file, do_render = True)
+
+    if visualize:
+        visualizer.add_geometry(coordinate_frame)
+        visualizer.run()
+    else:
+        visualizer.destroy_window() 
+
+def get_bounding_box(image, text, tries, save_file):
     processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch32")
     model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch32")
 
@@ -107,7 +149,7 @@ def get_bounding_box(image, text, tries):
             img_drw.text((box[0], box[1]), str(round(max_score.item(), 3)), fill="red")
         else:
             img_drw.rectangle([(box[0], box[1]), (box[2], box[3])], outline="white")
-    new_image.save(f"./example_data/bounding_box21_{tries}.png")
+    new_image.save(save_file)
     return max_box    
 
 def show_mask(mask, ax, random_color=False):
@@ -193,7 +235,9 @@ def demo():
         mode = socket.recv_string()
         print(f"mode - {mode}")
         socket.send_string("Mode received")
-        data_dir = "./example_data/"
+        if not os.path.exists(cfgs.environment + "/" + text + "/anygrasp_open_source/"):
+            os.makedirs(cfgs.environment + "/" + text + "/anygrasp_open_source/")
+        # data_dir = "./example_data/"
         # colors = np.array(Image.open(os.path.join(data_dir, 'peiqi_test_rgb21.png')))
         # image = Image.open(os.path.join(data_dir, 'peiqi_test_rgb21.png'))
         # colors = colors / 255.0
@@ -205,7 +249,8 @@ def demo():
         # head_tilt = 45/100
         # ref_vec = np.array([0, math.cos(head_tilt), -math.sin(head_tilt)])
         
-        [crop_x_min, crop_y_min, crop_x_max, crop_y_max] = get_bounding_box(image, text, tries)
+        [crop_x_min, crop_y_min, crop_x_max, crop_y_max] = get_bounding_box(image, text, tries,
+                                save_file=cfgs.environment + "/" + text + "/anygrasp_open_source/" + cfgs.method +  "_anygrasp_open_owl_vit_bboxes.jpg")
         print(crop_x_min, crop_y_min, crop_x_max, crop_y_max)
 
         bbox_center = [int((crop_x_min + crop_x_max)/2), int((crop_y_min + crop_y_max)/2)]
@@ -390,7 +435,7 @@ def demo():
             else:
                 # remove outlier
                 # mask = (points_z > 0) & (points_z < 3)
-                mask = points_z > 0
+                mask = (points_z > 0) & (points_z < 2)
                 points = np.stack([points_x, -points_y, points_z], axis=-1)
                 points = points[mask].astype(np.float32)
                 print(f"points shape: {points.shape}")
@@ -427,7 +472,6 @@ def demo():
                 filter_gg = GraspGroup()
                 # print(gg.scores())
 
-
                 min_score, max_score = 1, -10
                 img_drw = ImageDraw.Draw(image)
                 img_drw.rectangle([(crop_x_min, crop_y_min), (crop_x_max, crop_y_max)], outline="red")
@@ -459,7 +503,7 @@ def demo():
                         g.score = score
                         filter_gg.add(g)
 
-                    
+                print(f"max score {max_score}")
                     # print(grasp_center, ix, iy, g.depth)
                 if (len(filter_gg) == 0):
                     print("No grasp poses detected for this object try to move the object a little and try again")
@@ -477,7 +521,9 @@ def demo():
                     flag = False
                     tries = -1
 
-    image.save("./example_data/grasp_projections21.png")
+    # image.save("./example_data/grasp_projections21.png")
+    image.save(cfgs.environment + "/" + text + "/anygrasp_open_source/" + cfgs.method +  "_anygrasp_open_grasp_projections.jpg")
+
 
     filter_gg = filter_gg.nms().sort_by_score()
 
@@ -492,16 +538,18 @@ def demo():
         filter_grippers = filter_gg.to_open3d_geometry_list()
         for gripper in grippers:
             gripper.transform(trans_mat)
-
-        colors =[[0.3, 0, 0], [0.6, 0, 0], [1, 0, 0],
-                 [0, 0.3, 0], [0, 0.6, 0], [0, 1, 0], 
-                 [0, 0, 0.3], [0, 0, 0.6], [0, 0, 1],
-                 [0.3, 0.3, 0], [0.6, 0.6, 0], [1, 1, 0],
-                 [0.3, 0, 0.3], [0.6, 0, 0.6], [1, 0 ,1],
-                 [0, 0.3, 0.3], [0, 0.6, 0.6], [0, 1, 1],
-                 [0.3, 0.3, 0.3], [0.6, 0.6, 0.6], [1,1,1]]
-        for idx, gripper in enumerate(filter_grippers):
+        for gripper in filter_grippers:
             gripper.transform(trans_mat)
+
+        # colors =[[0.3, 0, 0], [0.6, 0, 0], [1, 0, 0],
+        #          [0, 0.3, 0], [0, 0.6, 0], [0, 1, 0], 
+        #          [0, 0, 0.3], [0, 0, 0.6], [0, 0, 1],
+        #          [0.3, 0.3, 0], [0.6, 0.6, 0], [1, 1, 0],
+        #          [0.3, 0, 0.3], [0.6, 0, 0.6], [1, 0 ,1],
+        #          [0, 0.3, 0.3], [0, 0.6, 0.6], [0, 1, 1],
+        #          [0.3, 0.3, 0.3], [0.6, 0.6, 0.6], [1,1,1]]
+        for idx, gripper in enumerate(filter_grippers):
+            # gripper.transform(trans_mat)
             g = filter_gg[idx]
             if max_score != min_score:
                 color_val = (g.score - min_score)/(max_score - min_score)
@@ -513,30 +561,16 @@ def demo():
             gripper.paint_uniform_color(color)
         # pcd.transform(trans_mat)
         
-        # vis = o3d.visualization.Visualizer()
-        # vis.create_window()
-        # vis.add_geometry([*grippers, cloud])
-        # vis.add_geometry([grippers[0], cloud])
-        coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2, origin=[0, 0, 0])
-        # o3d.visualizer.add_geometry(coordinate_frame)
-        # o3d.visualization.draw_geometries([*grippers, cloud, coordinate_frame])
-        
-        # plt.imshow(image)
-        # plt.show()
 
-        #o3d.visualization.draw_geometries([*filter_grippers, cloud, coordinate_frame])
-        o3d.visualization.draw_geometries([filter_grippers[0], cloud, coordinate_frame])
+        visualize_cloud_grippers(cloud, grippers, visualize = True, 
+                save_file = cfgs.environment + "/" + text + "/anygrasp_open_source/" + cfgs.method +  "_anygrasp_open_poses.jpg")
+        # visualize_cloud_grippers(cloud, filter_grippers, visualize = True, 
+        #         save_file = cfgs.environment + "/" + text + "/" + cfgs.method +  "_anygrasp_open_poses.jpg")
+        visualize_cloud_grippers(cloud, [filter_grippers[0]], visualize=True, 
+                save_file = cfgs.environment + "/" + text + "/anygrasp_open_source/" + cfgs.method + "_anygrasp_open_best_pose.jpg")
+        
     
     send_msg(filter_gg[0].translation, filter_gg[0].rotation_matrix, [filter_gg[0].depth, crop_flag, 0])
-    # print(socket.recv_string())
-    # send_array(socket, filter_gg[0].translation)
-    # print(socket.recv_string())
-    # send_array(socket, filter_gg[0].rotation_matrix)
-    # print(socket.recv_string())
-    # send_array(socket, np.array([filter_gg[0].depth, crop_flag, 0]))
-    # print(socket.recv_string())
-    # send_array(socket, np.array([crop_flag]))
-    # print(socket.recv_string())
     if cfgs.open_communication:
         socket.send_string("Now you received the gripper pose, good luck.")
         

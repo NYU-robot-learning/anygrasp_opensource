@@ -15,3 +15,7 @@
 logs
 dataset/tolerance
 **/.idea/
+/example_data/*
+/graspnet/*
+*.zip
+*.pth
